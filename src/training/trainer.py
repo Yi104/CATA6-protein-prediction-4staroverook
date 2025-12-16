@@ -1,6 +1,6 @@
 import torch
 from tqdm import tqdm
-from src.evaluation.metrics import compute_fmax
+from src.evaluation.metrics import compute_fmax_hierarchical, compute_microf1_debug
 
 class Trainer:
     """
@@ -24,6 +24,8 @@ class Trainer:
         device: torch.device,
         criterion: torch.nn.Module,
         optimizer: torch.optim.Optimizer,
+        idx2go: list,
+        godag,
     ):
         self.model = model
         self.device = device
@@ -31,6 +33,8 @@ class Trainer:
         self.optimizer = optimizer
 
         self.model.to(self.device)
+        self.idx2go = idx2go
+        self.godag = godag
 
     def train_one_epoch(self, dataloader):
         """
@@ -115,7 +119,10 @@ class Trainer:
         logits = torch.cat(all_logits, dim=0)
         targets = torch.cat(all_targets, dim=0)
 
-        fmax, best_t = compute_fmax(logits, targets)
+
+        fmax, best_t = compute_fmax_hierarchical(
+            logits, targets, self.idx2go, self.godag
+        )
 
         avg_loss = total_loss / len(dataloader)
         return avg_loss, fmax, best_t

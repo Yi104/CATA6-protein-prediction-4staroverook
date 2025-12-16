@@ -15,6 +15,8 @@ from torch.utils.data import DataLoader, Dataset
 from src.dataloader.embedding_loader import load_embeddings_h5
 from src.models.mlp import MLPClassifier
 from src.ontology.go_ontology import load_go_ontology, build_ontology_index
+from goatools.obo_parser import GODag
+from src.ontology.propagation import propagate_ancestors
 
 import numpy as np
 
@@ -74,7 +76,7 @@ def main():
     # --------------------------------------------------
     # 1) Load test embeddings
     # --------------------------------------------------
-    print("\nLoading test embeddings...")
+    print("\nStep1: Loading test embeddings...")
     emb_dict, emb_info = load_embeddings_h5(TEST_EMB_PATH, return_info=True)
     input_dim = emb_info["dimensionality"]
     print(f"Loaded {len(emb_dict)} test proteins")
@@ -91,7 +93,7 @@ def main():
     # --------------------------------------------------
     # 2) Load checkpoint
     # --------------------------------------------------
-    print("\nLoading checkpoint...")
+    print("\nStep 2: Loading checkpoint...")
     ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
 
     threshold = ckpt["threshold"]
@@ -129,7 +131,7 @@ def main():
     else:
         raise ValueError(f"Unrecognized go_vocab.json type: {type(vocab)}")
 
-    print(f"Loaded idx2go with {len(idx2go)} terms. Example: {idx2go[:5]}")
+    print(f"Step 3: Loaded idx2go with {len(idx2go)} terms. Example: {idx2go[:5]}")
 
 
     # ================================
@@ -138,13 +140,14 @@ def main():
 
     OBO_PATH = "data/raw/Train/go-basic.obo"
 
-    print("Loading GO ontology...")
+    print("Step4: Loading GO ontology...")
     go2ont = load_go_ontology(OBO_PATH)
     print(f"GO terms with ontology info: {len(go2ont)}")
     mf_idx, bp_idx, cc_idx = build_ontology_index(idx2go, go2ont)
+    godag = GODag(OBO_PATH) # add DAG for evaluation and post processing
 
     print(
-        f"Ontology split — "
+        f"Step 4 Ontology split — "
         f"MF: {len(mf_idx)}, "
         f"BP: {len(bp_idx)}, "
         f"CC: {len(cc_idx)}"

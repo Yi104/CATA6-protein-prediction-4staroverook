@@ -1,7 +1,70 @@
 import torch
+from collections import defaultdict
+from src.ontology.propagation import propagate_ancestors
 
+def compute_fmax_hierarchical(
+    logits: torch.Tensor,
+    targets: torch.Tensor,
+    idx2go: list,
+    godag,
+    thresholds=None,
+    eps: float = 1e-8,
+):
+    """
+    Hierarchy-aware (but unweighted) Fmax, protein-centric.
+    This is the correct next baseline toward CAFA.
+    """
 
-def compute_fmax(
+    if thresholds is None:
+        thresholds = torch.linspace(0.01, 0.99, 99)
+
+    probs = torch.sigmoid(logits)
+
+    N, C = probs.shape
+    best_f1 = 0.0
+    best_t = 0.0
+
+    # Precompute true GO sets per protein
+    true_go_sets = []
+    for i in range(N):
+        go_set = {
+            idx2go[j]
+            for j in range(C)
+            if targets[i, j] > 0
+        }
+        true_go_sets.append(
+            propagate_ancestors(go_set, godag)
+        )
+
+    for t in thresholds:
+        tp = fp = fn = 0.0
+
+        for i in range(N):
+            pred_go = {
+                idx2go[j]
+                for j in range(C)
+                if probs[i, j] >= t
+            }
+            pred_go = propagate_ancestors(pred_go, godag)
+
+            true_go = true_go_sets[i]
+
+            tp += len(pred_go & true_go)
+            fp += len(pred_go - true_go)
+            fn += len(true_go - pred_go)
+
+        precision = tp / (tp + fp + eps)
+        recall    = tp / (tp + fn + eps)
+
+        f1 = 2 * precision * recall / (precision + recall + eps)
+
+        if f1 > best_f1:
+            best_f1 = f1
+            best_t = t.item()
+
+    return best_f1, best_t
+
+def compute_microf1_debug(
     logits: torch.Tensor,
     targets: torch.Tensor,
     thresholds=None,
@@ -9,6 +72,7 @@ def compute_fmax(
 ):
     """
     Compute Fmax for multi-label classification.
+    # this is only to test the pipeline, not the final fmax should be used.
 
     Parameters
     ----------

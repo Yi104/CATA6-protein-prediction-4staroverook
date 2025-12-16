@@ -1,5 +1,8 @@
 from goatools.obo_parser import GODag
 import numpy as np
+from goatools.obo_parser import GODag
+from src.ontology.propagation import propagate_ancestors
+
 
 def load_go_ontology(obo_path):
     """

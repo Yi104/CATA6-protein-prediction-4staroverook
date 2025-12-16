@@ -24,6 +24,7 @@ from src.dataloader.go_label_loader import (
 from src.dataloader.dataset import ProteinDataset
 from src.models.mlp import MLPClassifier
 from src.training.trainer import Trainer
+from goatools.obo_parser import GODag
 
 
 # ---------------------------------------------------------------------
@@ -34,6 +35,7 @@ EMB_PATH = "data/embeddings/esm2_650M_trainval_concat_2560.h5"
 TERMS_PATH = "data/raw/Train/train_terms.tsv"
 TRAIN_ID_PATH = "data/processed/train_id_40.csv"
 VAL_ID_PATH = "data/processed/val_id_40.csv"
+OBO_PATH = "data/raw/Train/go-basic.obo"
 
 CHECKPOINT_DIR = "checkpoints"
 BEST_CKPT_PATH = os.path.join(CHECKPOINT_DIR, "best_mlp.pt")
@@ -125,11 +127,38 @@ def main():
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
     criterion = torch.nn.BCEWithLogitsLoss()
 
+    # -------------------------------
+    # GO vocabulary + GO DAG (for validation metric only)
+    # -------------------------------
+    with open(GO_VOCAB_PATH, "r") as f:
+        vocab = json.load(f)
+
+    # normalize to idx2go list (same logic you used in predict_test.py)
+    if isinstance(vocab, list):
+        idx2go = vocab
+    elif isinstance(vocab, dict) and all(k.isdigit() for k in vocab.keys()):
+        idx2go = [vocab[str(i)] for i in range(len(vocab))]
+    elif isinstance(vocab, dict) and all(isinstance(k, str) and k.startswith("GO:") for k in vocab.keys()):
+        max_i = max(vocab.values())
+        idx2go = [None] * (max_i + 1)
+        for go_id, i in vocab.items():
+            idx2go[i] = go_id
+        if any(x is None for x in idx2go):
+            raise ValueError("go_vocab.json (go2idx) is missing indices")
+    else:
+        raise ValueError("Unrecognized GO vocab format")
+
+    godag = GODag(OBO_PATH)
+    print("idx2go size:", len(idx2go))
+    print("godag terms:", len(godag))
+
     trainer = Trainer(
         model=model,
         device=device,
         criterion=criterion,
         optimizer=optimizer,
+        idx2go=idx2go,
+        godag=godag,
     )
 
     # --------------------------------------------------
