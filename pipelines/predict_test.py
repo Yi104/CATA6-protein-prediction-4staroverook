@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from src.dataloader.embedding_loader import load_embeddings_h5
 from src.models.mlp import MLPClassifier
+from src.ontology.go_ontology import load_go_ontology, build_ontology_index
 
 import numpy as np
 
@@ -30,8 +31,17 @@ OUTPUT_DIR = "submissions"
 OUTPUT_PATH = os.path.join(OUTPUT_DIR, "submission.tsv")
 
 BATCH_SIZE = 32
-TOP_K = 500
 NUM_WORKERS = 0
+
+# Replace global TOP_K
+TOP_K_MF = 100 # change to 100 later
+TOP_K_CC = 100 # change to 100 later
+TOP_K_BP = 300 # chagne to 300 later
+
+MIN_SCORE_MF = 0.02
+MIN_SCORE_CC = 0.02
+MIN_SCORE_BP = 0.01
+
 
 
 # ---------------------------------------------------------------------
@@ -91,13 +101,57 @@ def main():
     print(f"Output dim: {output_dim}")
 
     # --------------------------------------------------
-    # 3) Load GO vocabulary
+    # 3) Load GO vocabulary and ontology
     # --------------------------------------------------
     with open(GO_VOCAB_PATH, "r") as f:
-        idx2go = json.load(f)
+        vocab = json.load(f)
+
+    # ---------- normalize vocab to idx2go: List[str] -------------
+    if isinstance(vocab,list):
+        idx2go = vocab
+
+    elif isinstance(vocab,dict):
+        # case: {"0": "GO:....", "1": "GO:....", ...}
+        if all(isinstance(k,str) and k.isdigit() for k in vocab.keys()):
+            idx2go = [vocab[str(i)] for i in range(len(vocab))]
+        # case: {"GO:....": 0, "GO:....": 1, ...}
+        elif all(isinstance(k, str) and k.startswith("GO:") for k in vocab.keys()):
+            max_i = max(vocab.values())
+            idx2go = [None] * (max_i + 1)
+            for go_id, i in vocab.items():
+                idx2go[i] = go_id
+            if any(x is None for x in idx2go):
+                raise ValueError("go_vocab.json (go2idx) is missing indices")
+
+        else:
+            raise ValueError(f"Unrecognized go_vocab.json format: {list(vocab.items())[:3]}")
+
+    else:
+        raise ValueError(f"Unrecognized go_vocab.json type: {type(vocab)}")
+
+    print(f"Loaded idx2go with {len(idx2go)} terms. Example: {idx2go[:5]}")
+
+
+    # ================================
+    # 4) GO Ontology (MF / BP / CC)
+    # ================================
+
+    OBO_PATH = "data/raw/Train/go-basic.obo"
+
+    print("Loading GO ontology...")
+    go2ont = load_go_ontology(OBO_PATH)
+    print(f"GO terms with ontology info: {len(go2ont)}")
+    mf_idx, bp_idx, cc_idx = build_ontology_index(idx2go, go2ont)
+
+    print(
+        f"Ontology split — "
+        f"MF: {len(mf_idx)}, "
+        f"BP: {len(bp_idx)}, "
+        f"CC: {len(cc_idx)}"
+    )
 
     # --------------------------------------------------
-    # 4) Build model
+    # 5) Build model
     # --------------------------------------------------
     model = MLPClassifier(
         input_dim=input_dim,
@@ -108,10 +162,10 @@ def main():
     model.eval()
 
     # --------------------------------------------------
-    # 5) Inference
+    # 6) Inference
     # --------------------------------------------------
 
-    print("\nRunning inference...")
+    print("\nRunning ontology-aware inference...")
     total_written = 0
 
     with open(OUTPUT_PATH, "w") as out_f:
@@ -123,23 +177,51 @@ def main():
                 probs = torch.sigmoid(logits).cpu().numpy()
 
                 for pid, scores in zip(pids, probs):
-                    # Partial top-K (O(N))
-                    k = min(TOP_K, scores.shape[0])
-                    topk_idx = np.argpartition(-scores, k - 1)[:k]
 
-                    # Sort only top-K
-                    topk_idx = topk_idx[np.argsort(scores[topk_idx])[::-1]]
+                    # ---------- MF ----------
+                    mf_scores = scores[mf_idx]
+                    if mf_scores.size > 0:
+                        k = min(TOP_K_MF, mf_scores.size)
+                        top_local = np.argpartition(-mf_scores, k - 1)[:k]
+                        top_local = top_local[np.argsort(mf_scores[top_local])[::-1]]
 
-                    for idx in topk_idx:
-                        score = scores[idx]
-                        if score <= 0.0:
-                            continue
+                        for j in top_local:
+                            score = mf_scores[j]
+                            if score < MIN_SCORE_MF:
+                                break
+                            go_id = idx2go[mf_idx[j]]
+                            out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
+                            total_written += 1
 
-                        score_fmt = float(f"{score:.3g}")
-                        go_id = idx2go[str(idx)]
+                    # ---------- CC ----------
+                    cc_scores = scores[cc_idx]
+                    if cc_scores.size > 0:
+                        k = min(TOP_K_CC, cc_scores.size)
+                        top_local = np.argpartition(-cc_scores, k - 1)[:k]
+                        top_local = top_local[np.argsort(cc_scores[top_local])[::-1]]
 
-                        out_f.write(f"{pid}\t{go_id}\t{score_fmt}\n")
-                        total_written += 1
+                        for j in top_local:
+                            score = cc_scores[j]
+                            if score < MIN_SCORE_CC:
+                                break
+                            go_id = idx2go[cc_idx[j]]
+                            out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
+                            total_written += 1
+
+                    # ---------- BP ----------
+                    bp_scores = scores[bp_idx]
+                    if bp_scores.size > 0:
+                        k = min(TOP_K_BP, bp_scores.size)
+                        top_local = np.argpartition(-bp_scores, k - 1)[:k]
+                        top_local = top_local[np.argsort(bp_scores[top_local])[::-1]]
+
+                        for j in top_local:
+                            score = bp_scores[j]
+                            if score < MIN_SCORE_BP:
+                                break
+                            go_id = idx2go[bp_idx[j]]
+                            out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
+                            total_written += 1
 
     print("\nInference complete.")
     print(f"Submission written to: {OUTPUT_PATH}")

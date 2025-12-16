@@ -93,3 +93,7 @@ logs/
 *.cache
 .cache/
 
+# ==============================
+#  Submission
+# ==============================
+submissions/submission.tsv
