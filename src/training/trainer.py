@@ -1,6 +1,7 @@
+import os
 import torch
 from tqdm import tqdm
-from src.evaluation.metrics import compute_fmax_hierarchical, compute_microf1_debug
+from src.evaluation.metrics import compute_fmax_hierarchical
 
 class Trainer:
     """
@@ -35,6 +36,17 @@ class Trainer:
         self.model.to(self.device)
         self.idx2go = idx2go
         self.godag = godag
+
+        # -------------------------------
+        # Load GO IC weights (metric only)
+        # -------------------------------
+        ic_path = "checkpoints/go_ic.pt"
+        if os.path.exists(ic_path):
+            self.go_ic = torch.load(ic_path)
+            print("Loaded GO IC weights")
+        else:
+            self.go_ic = None
+            print("GO IC not found, using unweighted metric")
 
     def train_one_epoch(self, dataloader):
         """
@@ -86,7 +98,8 @@ class Trainer:
 
         return total_loss / len(dataloader)
 
-    def validate_with_metrics(self, dataloader):
+    def validate_with_metrics(self, dataloader,
+                              thresholds=None, max_proteins=1000, topk=200):
         """
         Validation pass that computes loss and Fmax.
 
@@ -119,9 +132,15 @@ class Trainer:
         logits = torch.cat(all_logits, dim=0)
         targets = torch.cat(all_targets, dim=0)
 
-
         fmax, best_t = compute_fmax_hierarchical(
-            logits, targets, self.idx2go, self.godag
+            logits,
+            targets,
+            self.idx2go,
+            self.godag,
+            go_ic=self.go_ic,  # key points
+            thresholds=thresholds,
+            max_proteins=max_proteins,
+            topk=topk,
         )
 
         avg_loss = total_loss / len(dataloader)

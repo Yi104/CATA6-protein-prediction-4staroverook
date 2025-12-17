@@ -25,6 +25,9 @@ from src.dataloader.dataset import ProteinDataset
 from src.models.mlp import MLPClassifier
 from src.training.trainer import Trainer
 from goatools.obo_parser import GODag
+from src.ontology.go_ic import compute_go_ic
+
+from src.evaluation.metrics import compute_fmax_hierarchical
 
 
 # ---------------------------------------------------------------------
@@ -40,6 +43,8 @@ OBO_PATH = "data/raw/Train/go-basic.obo"
 CHECKPOINT_DIR = "checkpoints"
 BEST_CKPT_PATH = os.path.join(CHECKPOINT_DIR, "best_mlp.pt")
 GO_VOCAB_PATH = os.path.join(CHECKPOINT_DIR, "go_vocab.json")
+
+
 
 BATCH_SIZE = 64
 LR = 1e-3
@@ -81,6 +86,10 @@ def main():
     df_terms = load_go_terms(TERMS_PATH)
     go2idx, idx2go = build_go_vocabulary(df_terms)
     label_dict = build_label_dictionary(df_terms, go2idx)
+    # Sanity check: idx2go must not contain None
+    if any(x is None for x in idx2go):
+        bad = [i for i, x in enumerate(idx2go) if x is None][:10]
+        raise ValueError(f"idx2go contains None at indices: {bad}")
 
     output_dim = len(go2idx)
     print(f"GO terms: {output_dim}")
@@ -91,6 +100,20 @@ def main():
     with open(GO_VOCAB_PATH, "w") as f:
         json.dump(idx2go_json, f)
     print(f"Saved GO vocabulary → {GO_VOCAB_PATH}")
+
+    # --------------------------------------------------
+    # 2.5) Compute GO IC (for CAFA-style weighted metric)
+    # --------------------------------------------------
+
+    IC_PATH = "checkpoints/go_ic.pt"
+
+    if not os.path.exists(IC_PATH):
+        print("Computing GO IC weights...")
+        go_ic = compute_go_ic(label_dict)
+        torch.save(go_ic, IC_PATH)
+        print(f"Saved GO IC to {IC_PATH}")
+    else:
+        print(f"GO IC already exists at {IC_PATH}")
 
     # --------------------------------------------------
     # 3) Load train / val splits

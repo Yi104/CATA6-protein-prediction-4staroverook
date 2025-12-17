@@ -1,7 +1,7 @@
 # src/ontology/propagation.py
 from goatools.obo_parser import GODag
 
-
+_ancestor_cache = {}
 
 def propagate_ancestors(go_set, godag):
     """
@@ -22,7 +22,13 @@ def propagate_ancestors(go_set, godag):
     expanded = set(go_set)
 
     for go_id in go_set:
-        if go_id in godag:
-            expanded |= godag[go_id].get_all_parents()
+        if go_id not in _ancestor_cache:
+            if go_id in godag:
+                _ancestor_cache[go_id] = godag[go_id].get_all_parents()
+            else:
+                _ancestor_cache[go_id] = set()
+
+        expanded |= _ancestor_cache[go_id]
+
 
     return expanded

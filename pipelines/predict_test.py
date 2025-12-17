@@ -140,14 +140,14 @@ def main():
 
     OBO_PATH = "data/raw/Train/go-basic.obo"
 
-    print("Step4: Loading GO ontology...")
+    print("\nStep4: Loading GO ontology...")
     go2ont = load_go_ontology(OBO_PATH)
     print(f"GO terms with ontology info: {len(go2ont)}")
     mf_idx, bp_idx, cc_idx = build_ontology_index(idx2go, go2ont)
     godag = GODag(OBO_PATH) # add DAG for evaluation and post processing
 
     print(
-        f"Step 4 Ontology split — "
+        f"\nStep 4 Ontology split — "
         f"MF: {len(mf_idx)}, "
         f"BP: {len(bp_idx)}, "
         f"CC: {len(cc_idx)}"
@@ -168,7 +168,7 @@ def main():
     # 6) Inference
     # --------------------------------------------------
 
-    print("\nRunning ontology-aware inference...")
+    print("\nStep 6: Running ontology-aware inference...")
     total_written = 0
 
     with open(OUTPUT_PATH, "w") as out_f:
