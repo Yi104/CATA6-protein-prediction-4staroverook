@@ -25,19 +25,21 @@ class ProteinDataset(Dataset):
     """
     PyTorch Dataset for protein classification tasks (e.g., GO prediction).
 
-    Parameters
-    ----------
-    emb_dict : dict[str, torch.Tensor]
-        Mapping from protein_id → embedding tensor of shape (D,).
-        Example: emb_dict["A0A0C5B5G6"] → tensor([2560])
+    IMPORTANT DESIGN NOTE (20260103 YJ)
+    ---------------------
+    We deliberately store labels in *sparse form* (list of GO indices)
+    instead of precomputing dense multi-hot vectors for all proteins.
 
-    label_dict : dict[str, torch.Tensor]
-        Mapping from protein_id → label vector of shape (num_labels,).
-        Example: label_dict["A0A0C5B5G6"] → tensor([0,1,0,...])
+    Reason:
+    - num_GO_terms can be very large (~20k–30k)
+    - pre-allocating one dense vector per protein leads to extreme memory usage
+    - dense label vectors are only needed *per batch*, not globally
 
-    protein_ids : list[str]
-        Ordered list of protein IDs to include in this dataset.
-        This defines the training / validation split explicitly.
+    This design:
+    - keeps memory usage low and stable
+    - follows PyTorch best practices
+    - avoids OOM / IDE crashes
+
 
     Notes
     -----
@@ -47,9 +49,26 @@ class ProteinDataset(Dataset):
     - Does not assume fixed embedding dimension — works with 1280, 2560, etc.
     """
 
-    def __init__(self, emb_dict, label_dict, protein_ids):
+    def __init__(self, emb_dict, label_dict, protein_ids, output_dim):
+        """
+                Parameters
+                ----------
+                emb_dict : dict[str, torch.Tensor]
+                    protein_id → embedding tensor, shape (D,)
+
+                label_idx_dict : dict[str, list[int]]
+                    protein_id → list of GO-term indices (sparse labels)
+                    Example: {"P12345": [12, 87, 2031]}
+
+                protein_ids : list[str]
+                    IDs defining the split (train / val)
+
+                output_dim : int
+                    Total number of GO terms (size of label space)
+                """
         self.emb = emb_dict
         self.labels = label_dict
+        self.output_dim = output_dim
 
         # Filter IDs to only those available in both dicts
         self.ids = [
@@ -60,10 +79,11 @@ class ProteinDataset(Dataset):
         if len(self.ids) == 0:
             raise ValueError("No overlapping protein IDs between embeddings and labels.")
 
+
         # Validate embedding dimensions (debug safety)
         example_pid = self.ids[0]
         self.embedding_dim = self.emb[example_pid].shape[-1]
-        self.num_labels = self.labels[example_pid].shape[-1]
+
 
     def __len__(self):
         return len(self.ids)
@@ -73,9 +93,14 @@ class ProteinDataset(Dataset):
         Returns
         -------
         embedding : torch.Tensor  shape = (embedding_dim,)
-        labels    : torch.Tensor  shape = (num_labels,)
+        labels    : torch.Tensor  Dense multi-hot vector of shape (output_dim,)
+            Constructed *on-the-fly* from sparse indices.
         """
         pid = self.ids[index]
         x = self.emb[pid]
-        y = self.labels[pid]
+        y = torch.zeros(self.output_dim, dtype=torch.float32)
+
+        for idx in self.labels[pid]:
+            y[idx] = 1
+
         return x, y
