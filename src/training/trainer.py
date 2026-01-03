@@ -1,3 +1,5 @@
+## src/training/trainer.py
+
 import os
 import torch
 from tqdm import tqdm
@@ -99,7 +101,10 @@ class Trainer:
         return total_loss / len(dataloader)
 
     def validate_with_metrics(self, dataloader,
-                              thresholds=None, max_proteins=1000, topk=200):
+                              thresholds=None, max_proteins=1000,
+                              topk=200,
+                              term_idx= None  #for ontology subset evaluation
+    ):
         """
         Validation pass that computes loss and Fmax.
 
@@ -118,12 +123,12 @@ class Trainer:
 
         with torch.no_grad():
             for x, y in dataloader:
+            #for x, y in tqdm(dataloader, desc="Val+Metrics", leave=False):
                 x = x.to(self.device)
                 y = y.to(self.device)
 
                 logits = self.model(x)
                 loss = self.criterion(logits, y)
-
                 total_loss += loss.item()
 
                 all_logits.append(logits.cpu())
@@ -132,10 +137,18 @@ class Trainer:
         logits = torch.cat(all_logits, dim=0)
         targets = torch.cat(all_targets, dim=0)
 
+        # slice ontology subset if provided:
+        if term_idx is not None:
+            logits = logits[:,term_idx]
+            targets = targets[:,term_idx]
+            idx2go = [self.idx2go[i] for i in term_idx]
+        else:
+            idx2go = self.idx2go
+
         fmax, best_t = compute_fmax_hierarchical(
             logits,
             targets,
-            self.idx2go,
+            idx2go,
             self.godag,
             go_ic=self.go_ic,  # key points
             thresholds=thresholds,
