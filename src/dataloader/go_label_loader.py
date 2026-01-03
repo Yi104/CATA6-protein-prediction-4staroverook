@@ -14,6 +14,7 @@ train_terms.tsv has columns:
 
 import pandas as pd
 import torch
+from collections import defaultdict
 
 
 def load_go_terms(term_file):
@@ -51,23 +52,58 @@ def build_go_vocabulary(df):
     return go2idx, idx2go
 
 
-def build_label_dictionary(df, go2idx):
+# def build_label_dictionary(df, go2idx):
+#     """
+#     Build:
+#         protein_id -> multi-hot vector
+#         This is dense index (later oom, change to sparse index (2026/01/03) see function below
+#     """
+#     label_dict = {}
+#
+#     # group by protein
+#     grouped = df.groupby("entry_id")
+#
+#     for pid, group in grouped:
+#         vec = torch.zeros(len(go2idx), dtype=torch.float32) # this step cause OOM
+#
+#
+#         for term in group["term"].values:
+#             idx = go2idx[term]
+#             vec[idx] = 1.0
+#
+#         label_dict[pid] = vec
+#
+#     return label_dict
+
+def build_label_dictionary_sparse(df, go2idx):
     """
     Build:
-        protein_id → multi-hot vector
+    protein_idx -> list[int] (go term indexes)
+    used for training/validation dataset to construct dense multi-hot
+    Why sparse:
+    - avoids storing one dense vector per protein (huge RAM)
+    - dense vector is only needed per sample/batch
     """
-    label_dict = {}
+    label_idx = defaultdict(list)
+    for pid, term in zip(df["entry_id"].astype(str), df["term"].astype(str)):
+        if term in go2idx:
+            label_idx[pid].append(go2idx[term])
 
-    # group by protein
-    grouped = df.groupby("entry_id")
+        # optional: remove duplicates to be safe (rare but cheap)
+    for pid in label_idx:
+        label_idx[pid] = list(set(label_idx[pid]))
 
-    for pid, group in grouped:
-        vec = torch.zeros(len(go2idx), dtype=torch.float32)
+    return dict(label_idx)
 
-        for term in group["term"].values:
-            idx = go2idx[term]
-            vec[idx] = 1.0
+def build_label_dictionary_set(df):
+    """
+    Build:
+        protein_id -> set[str] (GO IDs)
+    Used for IC computation and any GO-ID-based statistics.
+    """
+    label_go = defaultdict(set)
 
-        label_dict[pid] = vec
+    for pid, term in zip(df["entry_id"].astype(str), df["term"].astype(str)):
+        label_go[pid].add(term)
 
-    return label_dict
+    return dict(label_go)
