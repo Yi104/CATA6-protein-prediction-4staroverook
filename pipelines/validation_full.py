@@ -7,10 +7,10 @@ Full validation for a trained model:
 - macro-average across MF/CC/BP
 
 Callable from notebook:
-    from pipelines.validate_full import run_full_validation
+    from pipelines.validattion_full import run_full_validation
 
 Runnable as script:
-    python pipelines/validate_full.py
+    python pipelines/validation_full.py
 """
 
 import os
@@ -22,7 +22,7 @@ from goatools.obo_parser import GODag
 
 from src.dataloader.embedding_loader import load_embeddings_h5
 from src.dataloader.go_label_loader import (
-    load_go_terms, build_go_vocabulary, build_label_dictionary
+    load_go_terms, build_go_vocabulary, build_label_dictionary_sparse, build_label_dictionary_set
 )
 from src.dataloader.dataset import ProteinDataset
 from src.models.mlp import MLPClassifier
@@ -152,12 +152,12 @@ def main():
     # Build labels/vocab (must match training)
     df_terms = load_go_terms(TERMS_PATH)
     go2idx, idx2go = build_go_vocabulary(df_terms)
-    label_dict = build_label_dictionary(df_terms, go2idx)
+    label_dict = build_label_dictionary_sparse(df_terms, go2idx)
     print(f"GO terms: {len(idx2go)} | labeled proteins: {len(label_dict)}")
 
     # Val dataset/loader
     val_ids = load_id_list(VAL_ID_PATH)
-    val_ds = ProteinDataset(emb_dict, label_dict, val_ids)
+    val_ds = ProteinDataset(emb_dict, label_dict, val_ids, output_dim = len(go2idx))
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=NUM_WORKERS)
     print(f"Val proteins: {len(val_ds)}")
 

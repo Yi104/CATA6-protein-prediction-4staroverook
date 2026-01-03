@@ -20,7 +20,8 @@ from src.dataloader.embedding_loader import load_embeddings_h5
 from src.dataloader.go_label_loader import (
     load_go_terms,
     build_go_vocabulary,
-    build_label_dictionary,
+    build_label_dictionary_sparse,
+    build_label_dictionary_set
 )
 from src.dataloader.dataset import ProteinDataset
 from src.models.mlp import MLPClassifier
@@ -107,7 +108,7 @@ def main():
     print("\nLoading GO terms...")
     df_terms = load_go_terms(TERMS_PATH)
     go2idx, idx2go = build_go_vocabulary(df_terms)
-    label_dict = build_label_dictionary(df_terms, go2idx)
+    label_dict = build_label_dictionary_sparse(df_terms, go2idx)
 
     # Sanity check: idx2go must not contain None
     if any(x is None for x in idx2go):
@@ -132,7 +133,8 @@ def main():
 
     if not os.path.exists(IC_PATH):
         print("Computing GO IC weights...")
-        go_ic = compute_go_ic(label_dict)
+        label_go_dict = build_label_dictionary_set(df_terms)
+        go_ic = compute_go_ic(label_go_dict)
         torch.save(go_ic, IC_PATH)
         print(f"Saved GO IC to {IC_PATH}")
     else:
@@ -148,8 +150,8 @@ def main():
     # 4) Build datasets
     # --------------------------------------------------
     print("\nBuilding datasets...")
-    train_ds = ProteinDataset(emb_dict, label_dict, train_ids)
-    val_ds = ProteinDataset(emb_dict, label_dict, val_ids)
+    train_ds = ProteinDataset(emb_dict, label_dict, train_ids, output_dim = len(go2idx))
+    val_ds = ProteinDataset(emb_dict, label_dict, val_ids, output_dim = len(go2idx))
 
     print(f"Train dataset size: {len(train_ds)}")
     print(f"Val dataset size:   {len(val_ds)}")
