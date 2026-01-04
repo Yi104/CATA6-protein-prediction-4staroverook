@@ -1,21 +1,3 @@
-"""
-Defines ProteinDataset — a PyTorch Dataset for protein-level classification.
-Each item returned is a tuple:
-    (embedding_vector, label_vector)
-
-Embedding vectors come from ESM2 protein-level embeddings (e.g., 2560-dim).
-Label vectors come from GO-term annotations (multi-hot).
-
-Example:
-    x = tensor([2560 dims])
-    y = tensor([num_GO_terms dims], dtype=float32)
-
-This Dataset operates entirely on preloaded dictionaries to ensure:
-- fast random access
-- reproducibility
-- flexible ID-based splits (train/val/test)
-"""
-
 
 import torch
 from torch.utils.data import Dataset
@@ -35,13 +17,26 @@ class ProteinDataset(Dataset):
     - pre-allocating one dense vector per protein leads to extreme memory usage
     - dense label vectors are only needed *per batch*, not globally
 
+    At __getitem__ time, sparse indices are converted into a dense multi-hot vector
+    of length output_dim.
+
     This design:
     - keeps memory usage low and stable
     - follows PyTorch best practices
     - avoids OOM / IDE crashes
 
 
-    Notes
+    IMPLEMENTATION NOTE (2026-01-04 YJ)
+    --------------------------------
+    When densifying sparse labels, we use vectorized index_fill_ instead of
+    Python-level loops (e.g., `y[idx] = 1`).
+
+    Rationale:
+    - avoids millions of Python assignments per epoch
+    - leverages PyTorch's optimized backend
+    - scales better for large output spaces (e.g., CAFA / GO prediction)
+
+     Notes
     -----
     - The Dataset does *not* load embeddings from disk. Use
       embedding_loader.load_embeddings_h5() before passing to this Dataset.
@@ -100,7 +95,16 @@ class ProteinDataset(Dataset):
         x = self.emb[pid]
         y = torch.zeros(self.output_dim, dtype=torch.float32)
 
-        for idx in self.labels[pid]:
-            y[idx] = 1
+        # Sparse → dense (vectorized)
+        idxs = self.labels[pid]
+        if isinstance(idxs, torch.Tensor):
+            inds = idxs.long()
+        else:
+            inds = torch.tensor(list(idxs), dtype=torch.long)
+
+        if inds.numel() > 0:
+            # Safety: clip invalid indices (defensive programming)
+            inds = inds[(inds >= 0) & (inds < self.output_dim)]
+            y.index_fill_(0, inds, 1.0)
 
         return x, y
