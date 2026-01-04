@@ -44,7 +44,7 @@ class ProteinDataset(Dataset):
     - Does not assume fixed embedding dimension — works with 1280, 2560, etc.
     """
 
-    def __init__(self, emb_dict, label_dict, protein_ids, output_dim):
+    def __init__(self, emb_dict, label_idx_dict, protein_ids, output_dim):
         """
                 Parameters
                 ----------
@@ -62,13 +62,13 @@ class ProteinDataset(Dataset):
                     Total number of GO terms (size of label space)
                 """
         self.emb = emb_dict
-        self.labels = label_dict
+        self.labels = label_idx_dict
         self.output_dim = output_dim
 
         # Filter IDs to only those available in both dicts
         self.ids = [
             pid for pid in protein_ids
-            if pid in emb_dict and pid in label_dict
+            if pid in emb_dict and pid in label_idx_dict
         ]
 
         if len(self.ids) == 0:
