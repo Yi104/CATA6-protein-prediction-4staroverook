@@ -40,9 +40,16 @@ TOP_K_MF = 100 # change to 100 later
 TOP_K_CC = 100 # change to 100 later
 TOP_K_BP = 300 # chagne to 300 later
 
-MIN_SCORE_MF = 0.02
-MIN_SCORE_CC = 0.02
-MIN_SCORE_BP = 0.01
+# Per-ontology thresholds from IC-weighted full validation (Fmax-optimal)
+THRESH_MF = 0.17
+THRESH_CC = 0.17
+THRESH_BP = 0.06
+
+# Use thresholds as the score cutoff in inference
+MIN_SCORE_MF = THRESH_MF
+MIN_SCORE_CC = THRESH_CC
+MIN_SCORE_BP = THRESH_BP
+
 
 
 
@@ -61,6 +68,30 @@ class TestDataset(Dataset):
     def __getitem__(self, idx):
         pid = self.ids[idx]
         return pid, self.emb[pid]
+
+def propagate_with_max_scores(go_score: dict, godag):
+    """
+    Add all ancestors of predicted GO terms.
+
+    Scoring rule (professional default):
+    - ancestor score = max score among its predicted descendants
+
+    Why:
+    - preserves score monotonicity up the DAG
+    - avoids artificially inflating confidence
+    - aligns inference output with hierarchy-aware evaluation
+    """
+    out = dict(go_score)
+
+    for go_id, s in list(go_score.items()):
+        if go_id not in godag:
+            continue
+        for parent in godag[go_id].get_all_parents():
+            prev = out.get(parent)
+            if prev is None or s > prev:
+                out[parent] = float(s)
+
+    return out
 
 
 # ---------------------------------------------------------------------
@@ -96,10 +127,10 @@ def main():
     print("\nStep 2: Loading checkpoint...")
     ckpt = torch.load(CHECKPOINT_PATH, map_location=device)
 
-    threshold = ckpt["threshold"]
-    output_dim = ckpt["output_dim"]
+    threshold_all = ckpt.get("threshold", None)
+    print(f"Checkpoint ALL-threshold: {threshold_all:.3f}" if threshold_all is not None else "No threshold in ckpt")
 
-    print(f"Threshold: {threshold:.3f}")
+    output_dim = ckpt["output_dim"]
     print(f"Output dim: {output_dim}")
 
     # --------------------------------------------------
@@ -188,13 +219,25 @@ def main():
                         top_local = np.argpartition(-mf_scores, k - 1)[:k]
                         top_local = top_local[np.argsort(mf_scores[top_local])[::-1]]
 
+                        mf_pred = {}
                         for j in top_local:
                             score = mf_scores[j]
                             if score < MIN_SCORE_MF:
                                 break
                             go_id = idx2go[mf_idx[j]]
+
+                            # keep best score if duplicate occurs:
+                            prev = mf_pred.get(go_id)
+                            if prev is None or score > prev:
+                                mf_pred[go_id] = score
+
+                        # Hierarchy completion (add ancestors prediction)
+                        mf_pred = propagate_with_max_scores(mf_pred, godag)
+
+                        for go_id, score in mf_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
                             total_written += 1
+
 
                     # ---------- CC ----------
                     cc_scores = scores[cc_idx]
@@ -203,11 +246,19 @@ def main():
                         top_local = np.argpartition(-cc_scores, k - 1)[:k]
                         top_local = top_local[np.argsort(cc_scores[top_local])[::-1]]
 
+                        cc_pred = {}
                         for j in top_local:
-                            score = cc_scores[j]
+                            score = float(cc_scores[j])
                             if score < MIN_SCORE_CC:
                                 break
                             go_id = idx2go[cc_idx[j]]
+                            prev = cc_pred.get(go_id)
+                            if prev is None or score > prev:
+                                cc_pred[go_id] = score
+
+                        cc_pred = propagate_with_max_scores(cc_pred, godag)
+
+                        for go_id, score in cc_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
                             total_written += 1
 
@@ -218,11 +269,19 @@ def main():
                         top_local = np.argpartition(-bp_scores, k - 1)[:k]
                         top_local = top_local[np.argsort(bp_scores[top_local])[::-1]]
 
+                        bp_pred = {}
                         for j in top_local:
-                            score = bp_scores[j]
+                            score = float(bp_scores[j])
                             if score < MIN_SCORE_BP:
                                 break
                             go_id = idx2go[bp_idx[j]]
+                            prev = bp_pred.get(go_id)
+                            if prev is None or score > prev:
+                                bp_pred[go_id] = score
+
+                        bp_pred = propagate_with_max_scores(bp_pred, godag)
+
+                        for go_id, score in bp_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
                             total_written += 1
 

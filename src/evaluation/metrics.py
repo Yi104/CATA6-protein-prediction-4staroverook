@@ -1,7 +1,7 @@
 import torch
 from collections import defaultdict
 
-from ontology import go_ic
+
 from src.ontology.propagation import propagate_ancestors
 from src.ontology.go_ic import compute_go_ic
 
