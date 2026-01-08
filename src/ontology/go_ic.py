@@ -1,3 +1,10 @@
+"""
+IC(go)=−logP(go)
+if a GO term is more common, the IC information is less
+if GO is rare then the IC information is more.
+"""
+
+
 import math
 from collections import Counter
 
