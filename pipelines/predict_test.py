@@ -17,6 +17,7 @@ from src.models.mlp import MLPClassifier
 from src.ontology.go_ontology import load_go_ontology, build_ontology_index
 from goatools.obo_parser import GODag
 from src.ontology.propagation import propagate_ancestors
+from datetime import datetime
 
 import numpy as np
 
@@ -29,8 +30,6 @@ TEST_EMB_PATH = "data/embeddings/esm2_650M_test_concat_2560.h5"
 CHECKPOINT_PATH = "checkpoints/best_mlp.pt"
 GO_VOCAB_PATH = "checkpoints/go_vocab.json"
 
-OUTPUT_DIR = "submissions"
-OUTPUT_PATH = os.path.join(OUTPUT_DIR, "submission.tsv")
 
 BATCH_SIZE = 32
 NUM_WORKERS = 0
@@ -41,9 +40,9 @@ TOP_K_CC = 100 # change to 100 later
 TOP_K_BP = 300 # chagne to 300 later
 
 # Per-ontology thresholds from IC-weighted full validation (Fmax-optimal)
-THRESH_MF = 0.17
-THRESH_CC = 0.17
-THRESH_BP = 0.06
+THRESH_MF = 0.02 #0.17
+THRESH_CC = 0.02# 0.11
+THRESH_BP = 0.01# 0.06
 
 # Use thresholds as the score cutoff in inference
 MIN_SCORE_MF = THRESH_MF
@@ -51,6 +50,22 @@ MIN_SCORE_CC = THRESH_CC
 MIN_SCORE_BP = THRESH_BP
 
 
+OUTPUT_DIR = "submissions"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+run_tag = f"mf{MIN_SCORE_MF:.2f}_cc{MIN_SCORE_CC:.2f}_bp{MIN_SCORE_BP:.2f}_" + \
+          datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_PATH = os.path.join(OUTPUT_DIR, f"submission_{run_tag}.tsv")
+
+
+meta = {
+    "checkpoint": CHECKPOINT_PATH,
+    "topk": {"MF": TOP_K_MF, "CC": TOP_K_CC, "BP": TOP_K_BP},
+    "threshold": {"MF": MIN_SCORE_MF, "CC": MIN_SCORE_CC, "BP": MIN_SCORE_BP},
+    "propagate_ancestors": True,
+}
+with open(OUTPUT_PATH.replace(".tsv", ".json"), "w") as f:
+    json.dump(meta, f, indent=2)
 
 
 # ---------------------------------------------------------------------
@@ -93,6 +108,42 @@ def propagate_with_max_scores(go_score: dict, godag):
 
     return out
 
+def soft_hierarchical_consistency_reweighting(go_score: dict, godag, gamma=0.7, require_parent=False):
+    """
+    Soft hierarchy consistency without adding ancestors.
+    - If a term's parent is not predicted, down-weight the term.
+    - Optionally: require parent presence to keep the term (hard filter).
+
+    gamma: 0<gamma<=1, smaller => stronger penalty (e.g. 0.6~0.85)
+    require_parent: if True, drop term if none of its direct parents are predicted
+
+    20260105 YJ - new method to proceed ancestor propogation
+    Hierarchy-aware score reweighting.
+    Instead of propagating predictions to ancestor terms, we apply a parent-aware score reweighting strategy that
+    softly penalizes predicted child terms whose direct parents are absent from the prediction set.
+    This approach encourages hierarchical consistency while avoiding the error amplification commonly observed in full ancestor propagation.
+    """
+    out = dict(go_score)
+    predicted = set(go_score.keys())
+
+    for go_id, s in list(go_score.items()):
+        if go_id not in godag:
+            continue
+
+        # direct parents (not all ancestors)
+        parents = set(getattr(godag[go_id], "parents", []))  # goatools term has .parents
+        if not parents:
+            continue
+
+        has_parent = any(p.id in predicted for p in parents)  # parent nodes are GO objects
+        if not has_parent:
+            if require_parent:
+                out.pop(go_id, None)
+            else:
+                out[go_id] = float(s) * gamma
+
+    return out
+
 
 # ---------------------------------------------------------------------
 # Main
@@ -107,7 +158,7 @@ def main():
     # --------------------------------------------------
     # 1) Load test embeddings
     # --------------------------------------------------
-    print("\nStep1: Loading test embeddings...")
+    print("\nStep 1: Loading test embeddings...")
     emb_dict, emb_info = load_embeddings_h5(TEST_EMB_PATH, return_info=True)
     input_dim = emb_info["dimensionality"]
     print(f"Loaded {len(emb_dict)} test proteins")
@@ -171,7 +222,7 @@ def main():
 
     OBO_PATH = "data/raw/Train/go-basic.obo"
 
-    print("\nStep4: Loading GO ontology...")
+    print("\nStep 4: Loading GO ontology...")
     go2ont = load_go_ontology(OBO_PATH)
     print(f"GO terms with ontology info: {len(go2ont)}")
     mf_idx, bp_idx, cc_idx = build_ontology_index(idx2go, go2ont)
@@ -187,6 +238,7 @@ def main():
     # --------------------------------------------------
     # 5) Build model
     # --------------------------------------------------
+    print("\nStep 5: Building model ...")
     model = MLPClassifier(
         input_dim=input_dim,
         output_dim=output_dim,
@@ -223,7 +275,7 @@ def main():
                         for j in top_local:
                             score = mf_scores[j]
                             if score < MIN_SCORE_MF:
-                                break
+                                break # continue?
                             go_id = idx2go[mf_idx[j]]
 
                             # keep best score if duplicate occurs:
@@ -232,7 +284,8 @@ def main():
                                 mf_pred[go_id] = score
 
                         # Hierarchy completion (add ancestors prediction)
-                        mf_pred = propagate_with_max_scores(mf_pred, godag)
+                        # mf_pred = propagate_with_max_scores(mf_pred, godag)  don't do hierachy  Jan 6th
+                        # mf_pred = soft_hierarchical_consistency_reweighting(mf_pred, godag, gamma=0.7, require_parent=False)
 
                         for go_id, score in mf_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
@@ -255,8 +308,9 @@ def main():
                             prev = cc_pred.get(go_id)
                             if prev is None or score > prev:
                                 cc_pred[go_id] = score
-
-                        cc_pred = propagate_with_max_scores(cc_pred, godag)
+                        # Hierarchy completion (add ancestors prediction)
+                        # cc_pred = propagate_with_max_scores(cc_pred, godag)
+                        # cc_pred = soft_hierarchical_consistency_reweighting(cc_pred, godag, gamma=0.7, require_parent=False)
 
                         for go_id, score in cc_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
@@ -279,7 +333,9 @@ def main():
                             if prev is None or score > prev:
                                 bp_pred[go_id] = score
 
-                        bp_pred = propagate_with_max_scores(bp_pred, godag)
+                        # Hierarchy completion (add ancestors prediction)
+                        # bp_pred = propagate_with_max_scores(bp_pred, godag)
+                        # cc_pred = soft_hierarchical_consistency_reweighting(cc_pred, godag, gamma=0.7, require_parent=False)
 
                         for go_id, score in bp_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
