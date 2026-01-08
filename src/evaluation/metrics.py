@@ -38,6 +38,7 @@ from collections import defaultdict
 import numpy as np
 
 from src.ontology.propagation import propagate_ancestors
+
 from typing import Dict, List, Optional, Set, Tuple
 
 def compute_fmax_hierarchical(
@@ -46,7 +47,7 @@ def compute_fmax_hierarchical(
     idx2go: list[str],
     godag,
     go_ic: Optional[Dict[str, float]] = None,
-    thresholds: Optional[Dict[str,float]] = None, # for simple baseline test. later none.
+    thresholds: Optional[np.ndarray] = None, # for simple baseline test. later none.
     max_proteins: Optional[int] = None, # or None
     top_k =500, # add one variable 500 for full evaluation
     return_best_threshold: bool = True,
@@ -88,11 +89,14 @@ def compute_fmax_hierarchical(
     probs = torch.sigmoid(logits).detach().cpu().numpy()
     targets_np = targets.detach().cpu().numpy()
     n_proteins, n_classes = probs.shape
+    top_k = min(int(top_k), n_classes) # set boundary for top_k
 
     if thresholds is None:
         thresholds = np.linspace(0.01, 0.99, 50)
     else:
         thresholds = np.asarray(thresholds)
+
+
 
     # --- 2. GROUND TRUTH PROPAGATION ---
     # What it does: Converts sparse binary vectors into sets of GO IDs including all
