@@ -100,6 +100,7 @@ def build_label_dictionary_set(df):
     Build:
         protein_id -> set[str] (GO IDs)
     Used for IC computation and any GO-ID-based statistics.
+    no propogate_ancestor (term) --> flat
     """
     label_go = defaultdict(set)
 
