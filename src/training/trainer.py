@@ -29,6 +29,7 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         idx2go: list,
         godag,
+        ic_path: str = "checkpoints/go_ic.pt",
     ):
         self.model = model
         self.device = device
@@ -38,17 +39,28 @@ class Trainer:
         self.model.to(self.device)
         self.idx2go = idx2go
         self.godag = godag
+        self.go_ic = None
+        self.ic_meta = None
 
         # -------------------------------
         # Load GO IC weights (metric only)
         # -------------------------------
-        ic_path = "checkpoints/go_ic.pt"
-        if os.path.exists(ic_path):
-            self.go_ic = torch.load(ic_path)
-            print("Loaded GO IC weights")
+        if ic_path and os.path.exists(ic_path):
+            payload = torch.load(ic_path, map_location="cpu")
+
+            # Backward compatible:
+            # - old format: payload is a dict {go_id: ic}
+            # - new format: payload is {"go_ic": {...}, ...meta...}
+            if isinstance(payload, dict) and "go_ic" in payload:
+                self.go_ic = payload["go_ic"]
+                self.ic_meta = {k: v for k, v in payload.items() if k != "go_ic"}
+            else:
+                self.go_ic = payload
+                self.ic_meta = {"format": "legacy_dict"}
+
+            print(f"Loaded GO IC weights from {ic_path} (n_terms={len(self.go_ic)})")
         else:
-            self.go_ic = None
-            print("GO IC not found, using unweighted metric")
+            print("GO IC not found (or disabled), using unweighted metric")
 
     def train_one_epoch(self, dataloader):
         """
@@ -102,7 +114,7 @@ class Trainer:
 
     def validate_with_metrics(self, dataloader,
                               thresholds=None, max_proteins=1000,
-                              topk=200,
+                              top_k=200,
                               term_idx= None  #for ontology subset evaluation
     ):
         """
@@ -145,7 +157,7 @@ class Trainer:
         else:
             idx2go = self.idx2go
 
-        fmax, best_t = compute_fmax_hierarchical(
+        metrics = compute_fmax_hierarchical(
             logits,
             targets,
             idx2go,
@@ -153,8 +165,19 @@ class Trainer:
             go_ic=self.go_ic,  # key points
             thresholds=thresholds,
             max_proteins=max_proteins,
-            topk=topk,
+            top_k=top_k,
+            return_best_threshold = True,
         )
+        # Backward/forward compatible unpacking:
+        if isinstance(metrics, dict):
+            # Prefer unweighted for checkpoint selection
+            fmax = float(metrics.get("fmax_unweighted", 0.0))
+            best_t = float(metrics.get("best_t_unweighted", 0.0))
+        else:
+            # Old API: (fmax, best_t)
+            fmax, best_t = metrics
+
 
         avg_loss = total_loss / len(dataloader)
+        print("metric mode:", "IC-weighted" if self.go_ic is not None else "unweighted")
         return avg_loss, fmax, best_t
