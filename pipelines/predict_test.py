@@ -60,7 +60,7 @@ OUTPUT_PATH = os.path.join(OUTPUT_DIR, f"submission_{run_tag}.tsv")
 
 meta = {
     "checkpoint": CHECKPOINT_PATH,
-    "topk": {"MF": TOP_K_MF, "CC": TOP_K_CC, "BP": TOP_K_BP},
+    "top_k": {"MF": TOP_K_MF, "CC": TOP_K_CC, "BP": TOP_K_BP},
     "threshold": {"MF": MIN_SCORE_MF, "CC": MIN_SCORE_CC, "BP": MIN_SCORE_BP},
     "propagate_ancestors": True,
 }
@@ -275,7 +275,7 @@ def main():
                         for j in top_local:
                             score = mf_scores[j]
                             if score < MIN_SCORE_MF:
-                                break # continue?
+                                continue # break?
                             go_id = idx2go[mf_idx[j]]
 
                             # keep best score if duplicate occurs:
@@ -303,7 +303,7 @@ def main():
                         for j in top_local:
                             score = float(cc_scores[j])
                             if score < MIN_SCORE_CC:
-                                break
+                                continue #break
                             go_id = idx2go[cc_idx[j]]
                             prev = cc_pred.get(go_id)
                             if prev is None or score > prev:
@@ -327,7 +327,7 @@ def main():
                         for j in top_local:
                             score = float(bp_scores[j])
                             if score < MIN_SCORE_BP:
-                                break
+                                continue # break
                             go_id = idx2go[bp_idx[j]]
                             prev = bp_pred.get(go_id)
                             if prev is None or score > prev:
@@ -335,7 +335,7 @@ def main():
 
                         # Hierarchy completion (add ancestors prediction)
                         # bp_pred = propagate_with_max_scores(bp_pred, godag)
-                        # cc_pred = soft_hierarchical_consistency_reweighting(cc_pred, godag, gamma=0.7, require_parent=False)
+                        # bp_pred = soft_hierarchical_consistency_reweighting(cc_pred, godag, gamma=0.7, require_parent=False)
 
                         for go_id, score in bp_pred.items():
                             out_f.write(f"{pid}\t{go_id}\t{score:.4f}\n")
