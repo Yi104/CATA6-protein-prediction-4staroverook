@@ -93,16 +93,53 @@ def run_full_validation_from_tensors(
     """
     Compute full validation metrics from pre-collected logits/targets tensors.
     Returns a dict.
+
+    --- 20260104 YJ add
+     safeguards added:
+    - shape / vocab / ontology-index sanity checks
+    - optional IC coverage check
+    - build ontology-specific IC dicts (robust to future refactors)
     """
 
-    # ALL
+    # ------------
+    # 0) sanity check
+    # -----------
+    assert logits.ndim == 2 and targets.ndim == 2, (logits.ndim, targets.ndim)
+    assert logits.shape == targets.shape, (logits.shape, targets.shape)
+
+    N, C = logits.shape
+    assert len(idx2go) == C, (len(idx2go), C)
+
+    for name, idxs in [("mf_idx", mf_idx), ("cc_idx", cc_idx), ("bp_idx", bp_idx)]:
+        assert len(idxs) > 0, f"{name} is empty"
+        mi, ma = min(idxs), max(idxs)
+        assert mi >= 0 and ma < C, f"{name} out of range: min={mi}, max={ma}, C={C}"
+
+    # Optional: IC coverage check (helps debugging)
+    if go_ic is not None:
+        missing = sum(1 for go in idx2go if go not in go_ic)
+        if missing > 0:
+            print(f"[IC] missing terms in go_ic: {missing}/{len(idx2go)} (OK if small)")
+
+    # Helper: build IC dict restricted to a given idx list
+    def subset_ic(idxs):
+        if go_ic is None:
+            return None
+        # Keep only IC values for terms used in this sub-eval
+        return {idx2go[i]: go_ic[idx2go[i]] for i in idxs if idx2go[i] in go_ic}
+
+    # -------------------------
+    # 1) ALL
+    # -------------------------
     f_all, t_all = compute_fmax_hierarchical(
         logits, targets, idx2go, godag,
         go_ic=go_ic, thresholds=thresholds,
         max_proteins=max_proteins, topk=topk_all
     )
 
-    # MF
+    # -------------------------
+    # 2) MF
+    # -------------------------
     logits_mf, targets_mf = logits[:, mf_idx], targets[:, mf_idx]
     idx2go_mf = [idx2go[i] for i in mf_idx]
     f_mf, t_mf = compute_fmax_hierarchical(
@@ -111,7 +148,9 @@ def run_full_validation_from_tensors(
         max_proteins=max_proteins, topk=topk_mf
     )
 
-    # CC
+    # -------------------------
+    # 3) CC
+    # -------------------------
     logits_cc, targets_cc = logits[:, cc_idx], targets[:, cc_idx]
     idx2go_cc = [idx2go[i] for i in cc_idx]
     f_cc, t_cc = compute_fmax_hierarchical(
@@ -120,7 +159,9 @@ def run_full_validation_from_tensors(
         max_proteins=max_proteins, topk=topk_cc
     )
 
-    # BP
+    # -------------------------
+    # 4) BP
+    # -------------------------
     logits_bp, targets_bp = logits[:, bp_idx], targets[:, bp_idx]
     idx2go_bp = [idx2go[i] for i in bp_idx]
     f_bp, t_bp = compute_fmax_hierarchical(
